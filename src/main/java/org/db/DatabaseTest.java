@@ -48,10 +48,10 @@ public class DatabaseTest {
     
     private static void testUsers(DatabaseHelper db) {
         // Insert some test users
-        User admin = new User("admin", true);
-        User waiter = new User("waiter1", false);
-        User chef = new User("chef1", false);
-        
+        Admin admin = new Admin("admin");
+        Waiter waiter = new Waiter("waiter1");
+        Chef chef = new Chef("chef1");
+
         if (db.insertUser(admin)) {
             System.out.println("✓ Admin user inserted successfully");
         }
@@ -67,7 +67,7 @@ public class DatabaseTest {
         System.out.println("\nAll users in database:");
         for (User user : users) {
             System.out.println("- " + user.getUsername() + 
-                             (user.isAdmin() ? " (Admin)" : " (Regular)"));
+                             (user.isAdmin() ? " (Admin)" : user.isChef() ? " (Chef)" : " (Waiter)"));
         }
     }
     

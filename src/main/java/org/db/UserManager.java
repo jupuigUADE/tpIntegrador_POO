@@ -54,14 +54,18 @@ public class UserManager {
         try {
             connection.setAutoCommit(false);
             
-            // First create the user
-            String userSql = "INSERT OR IGNORE INTO users (username, admin) VALUES (?, ?)";
+            // First create the user (include role)
+            String userSql = "INSERT OR IGNORE INTO users (username, admin, role) VALUES (?, ?, ?)";
             try (PreparedStatement pstmt = connection.prepareStatement(userSql)) {
                 pstmt.setString(1, username);
                 pstmt.setBoolean(2, isAdmin);
+                String role = "WAITER";
+                if (isAdmin) role = "ADMIN";
+                else if (username != null && username.toLowerCase().contains("chef")) role = "CHEF";
+                pstmt.setString(3, role);
                 pstmt.executeUpdate();
             }
-            
+
             // Then add the password
             String passwordSql = "INSERT OR REPLACE INTO user_passwords (username, password_hash) VALUES (?, ?)";
             try (PreparedStatement pstmt = connection.prepareStatement(passwordSql)) {
@@ -69,7 +73,7 @@ public class UserManager {
                 pstmt.setString(2, hashPassword(password));
                 pstmt.executeUpdate();
             }
-            
+
             connection.commit();
             connection.setAutoCommit(true);
             return true;
@@ -84,10 +88,10 @@ public class UserManager {
             return false;
         }
     }
-    
+
     public boolean authenticateUser(String username, String password) {
         String sql = "SELECT password_hash FROM user_passwords WHERE username = ?";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, username);
             

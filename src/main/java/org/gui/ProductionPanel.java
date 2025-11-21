@@ -31,7 +31,8 @@ public class ProductionPanel extends JPanel {
         this.menu = menu;
         this.stock = stock;
 
-        String[] cols = {"ID", "Recipe", "Qty", "Status", "Created", "Started", "Finished"};
+        // include ETA (minutes) column
+        String[] cols = {"ID", "Recipe", "Qty", "Status", "ETA (min)", "Created", "Started", "Finished"};
         tableModel = new DefaultTableModel(cols, 0) { @Override public boolean isCellEditable(int r,int c){return false;} };
         table = new JTable(tableModel);
 
@@ -53,6 +54,9 @@ public class ProductionPanel extends JPanel {
         btnCreate.addActionListener(e -> onCreate());
         btnStart.addActionListener(e -> onStart());
         btnFinish.addActionListener(e -> onFinish());
+
+        // Refresh table automatically when production jobs change
+        productionService.addJobListener(job -> javax.swing.SwingUtilities.invokeLater(this::refreshTable));
 
         refreshTable();
     }
@@ -93,8 +97,11 @@ public class ProductionPanel extends JPanel {
         tableModel.setRowCount(0);
         List<ProductionJob> jobs = productionService.listJobs();
         for (ProductionJob j : jobs) {
+            // compute ETA in minutes for this job
+            long etaMinutes = productionService.estimateRemainingMinutesForJob(j.getId());
+            String etaText = etaMinutes < 0 ? "-" : String.valueOf(etaMinutes);
             Object[] row = new Object[]{
-                j.getId(), j.getRecipe().getNombre(), j.getQuantity(), j.getStatus(),
+                j.getId(), j.getRecipe().getNombre(), j.getQuantity(), j.getStatus(), etaText,
                 j.getCreatedAt()!=null?j.getCreatedAt().format(dtf):"-",
                 j.getStartedAt()!=null?j.getStartedAt().format(dtf):"-",
                 j.getFinishedAt()!=null?j.getFinishedAt().format(dtf):"-"
@@ -103,4 +110,3 @@ public class ProductionPanel extends JPanel {
         }
     }
 }
-

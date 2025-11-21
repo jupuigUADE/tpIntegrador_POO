@@ -1,4 +1,4 @@
-package org.example;
+package org.gui;
 
 import org.db.DatabaseHelper;
 import org.db.UserManager;
@@ -16,7 +16,9 @@ public class LoginDialog extends JDialog {
         super(owner, "Inicio de Sesión - Restaurante", true);
         this.db = new DatabaseHelper();
         this.userManager = new UserManager();
-        
+        // Ensure the default demo users and their password hashes exist in the database
+        this.userManager.initializeDefaultUsers();
+
         setLayout(new GridBagLayout());
         GridBagConstraints c = new GridBagConstraints();
         c.insets = new Insets(8,8,8,8);
@@ -138,4 +140,3 @@ public class LoginDialog extends JDialog {
         return dialog.result;
     }
 }
-

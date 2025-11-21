@@ -1,7 +1,7 @@
 package org.models;
 
 public enum EstadoPedido {
-    QUEUED, IN_PROGRESS, DONE, FAILED
+    QUEUED, IN_PROGRESS, DONE, CANCELLED
 }
 
 

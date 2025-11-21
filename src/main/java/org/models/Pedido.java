@@ -33,6 +33,16 @@ public class Pedido {
         for (Consumer<ProductionJob> l : jobListeners) {
             try { l.accept(job); } catch (Exception ignored) {}
         }
+        // Try to start immediately if stock is available; if not, leave the job queued.
+        try {
+            if (recipe.canProduce(stock, quantity)) {
+                // startJob will handle deductions and change status to IN_PROGRESS
+                startJob(id);
+            }
+        } catch (Exception ignored) {
+            // if start fails, keep job queued or let startJob mark it failed
+        }
+
         return job;
     }
 
@@ -52,6 +62,69 @@ public class Pedido {
 
     public synchronized List<Integer> getQueue() {
         return new ArrayList<>(queue);
+    }
+
+    // Estimate completion time in minutes from now for a newly created job (without actually adding it).
+    // This sums remaining time of the in-progress job and durations of queued jobs, then adds the new job duration.
+    public synchronized long estimateCompletionForNewJob(Recipe recipe, int quantity) {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        long minutesAhead = 0L;
+
+        // consider jobs sorted by id
+        List<ProductionJob> existing = listJobs();
+        for (ProductionJob j : existing) {
+            if (j.getStatus() == ProductionJob.Status.DONE || j.getStatus() == ProductionJob.Status.FAILED) continue;
+            long dur = (long) j.getRecipe().getTiempoPreparacionMinutos() * (long) j.getQuantity();
+            if (j.getStatus() == ProductionJob.Status.IN_PROGRESS) {
+                if (j.getStartedAt() != null) {
+                    long elapsed = java.time.Duration.between(j.getStartedAt(), now).toMinutes();
+                    long remaining = dur - elapsed;
+                    minutesAhead += Math.max(0L, remaining);
+                } else {
+                    minutesAhead += dur; // fallback
+                }
+            } else if (j.getStatus() == ProductionJob.Status.QUEUED) {
+                minutesAhead += dur;
+            }
+        }
+
+        // add new job duration
+        minutesAhead += (long) recipe.getTiempoPreparacionMinutos() * (long) quantity;
+
+        return minutesAhead;
+    }
+
+    // Estimate remaining minutes from now until the given jobId would be finished.
+    // Returns -1 if job not found.
+    public synchronized long estimateRemainingMinutesForJob(int jobId) {
+        ProductionJob target = jobs.get(jobId);
+        if (target == null) return -1L;
+
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        long minutesAhead = 0L;
+
+        // consider jobs in order
+        List<ProductionJob> existing = listJobs();
+        for (ProductionJob j : existing) {
+            if (j.getStatus() == ProductionJob.Status.DONE || j.getStatus() == ProductionJob.Status.FAILED) continue;
+            int durMinutes = j.getRecipe().getTiempoPreparacionMinutos() * j.getQuantity();
+
+            if (j.getStatus() == ProductionJob.Status.IN_PROGRESS) {
+                if (j.getStartedAt() != null) {
+                    long elapsed = java.time.Duration.between(j.getStartedAt(), now).toMinutes();
+                    long remaining = Math.max(0L, durMinutes - elapsed);
+                    minutesAhead += remaining;
+                } else {
+                    minutesAhead += durMinutes;
+                }
+            } else if (j.getStatus() == ProductionJob.Status.QUEUED) {
+                minutesAhead += durMinutes;
+            }
+
+            if (j.getId() == jobId) break; // stop when we have included the target job
+        }
+
+        return minutesAhead;
     }
 
     // Attempt to start a job: will check stock and deduct ingredients atomically (attempt rollback on failure)
@@ -124,6 +197,42 @@ public class Pedido {
         job.setStatus(success ? ProductionJob.Status.DONE : ProductionJob.Status.FAILED);
         // notify listeners
         for (Consumer<ProductionJob> l : jobListeners) { try { l.accept(job); } catch (Exception ignored) {} }
+
+        // After finishing a job, attempt to start the next queued job that can be produced
+        // (iterate in queue order and start the first one with sufficient stock)
+        for (Integer qid : new ArrayList<>(queue)) {
+            ProductionJob next = jobs.get(qid);
+            if (next == null) continue;
+            if (next.getStatus() != ProductionJob.Status.QUEUED) continue;
+            Recipe r = next.getRecipe();
+            int qty = next.getQuantity();
+            try {
+                if (r.canProduce(stock, qty)) {
+                    // startJob will remove it from the queue and notify listeners
+                    boolean started = startJob(qid);
+                    if (started) break; // only start one job now
+                }
+            } catch (Exception ignored) {
+                // if check or start fails, try next queued job
+            }
+        }
+
+        return true;
+    }
+
+    // Cancel a job (mark FAILED, set note) and notify listeners.
+    public synchronized boolean cancelJob(int jobId) {
+        ProductionJob job = jobs.get(jobId);
+        if (job == null) return false;
+        // if already finished, nothing to do
+        if (job.getStatus() == ProductionJob.Status.DONE || job.getStatus() == ProductionJob.Status.FAILED) return false;
+        job.setFinishedAt(LocalDateTime.now());
+        job.setStatus(ProductionJob.Status.FAILED);
+        job.setNote("Cancelled");
+        // remove from queue if present
+        queue.remove((Integer) jobId);
+        for (Consumer<ProductionJob> l : jobListeners) { try { l.accept(job); } catch (Exception ignored) {} }
         return true;
     }
 }
+

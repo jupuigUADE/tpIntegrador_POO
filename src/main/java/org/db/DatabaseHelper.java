@@ -26,6 +26,8 @@ public class DatabaseHelper {
 
     private void initializeTables() {
         createUsersTable();
+        // Ensure older DBs get the 'role' column if it was missing
+        ensureUserRoleColumnExists();
         createMesasTable();
         createIngredientesTable();
         createRecipesTable();
@@ -34,12 +36,37 @@ public class DatabaseHelper {
         createReservationsTable();
     }
 
+    // Migration: add 'role' column to users table if missing (keeps default 'WAITER')
+    private void ensureUserRoleColumnExists() {
+        try (Statement stmt = connection.createStatement()) {
+            // Check if 'role' exists in users table
+            ResultSet rs = stmt.executeQuery("PRAGMA table_info(users);");
+            boolean hasRole = false;
+            while (rs.next()) {
+                String colName = rs.getString("name");
+                if ("role".equalsIgnoreCase(colName)) {
+                    hasRole = true;
+                    break;
+                }
+            }
+
+            if (!hasRole) {
+                // Add column with default to avoid breaking existing code
+                stmt.execute("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'WAITER';");
+                System.out.println("Migrated users table: added 'role' column with default 'WAITER'");
+            }
+        } catch (SQLException e) {
+            System.err.println("Error ensuring role column in users table: " + e.getMessage());
+        }
+    }
+
     private void createUsersTable() {
         String sql = """
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
-                admin BOOLEAN NOT NULL DEFAULT 0
+                admin BOOLEAN NOT NULL DEFAULT 0,
+                role TEXT NOT NULL DEFAULT 'WAITER'
             )
             """;
         
@@ -164,12 +191,17 @@ public class DatabaseHelper {
 
     // User CRUD operations
     public boolean insertUser(User user) {
-        String sql = "INSERT INTO users (username, admin) VALUES (?, ?)";
-        
+        String sql = "INSERT OR IGNORE INTO users (username, admin, role) VALUES (?, ?, ?)";
+
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, user.getUsername());
             pstmt.setBoolean(2, user.isAdmin());
-            
+            // determine role string based on concrete subclass
+            String role = "WAITER";
+            if (user.isAdmin()) role = "ADMIN";
+            else if (user.isChef()) role = "CHEF";
+            pstmt.setString(3, role);
+
             int rowsAffected = pstmt.executeUpdate();
             return rowsAffected > 0;
         } catch (SQLException e) {
@@ -180,15 +212,16 @@ public class DatabaseHelper {
 
     public List<User> getAllUsers() {
         List<User> users = new ArrayList<>();
-        String sql = "SELECT username, admin FROM users";
-        
+        String sql = "SELECT username, admin, role FROM users";
+
         try (Statement stmt = connection.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
             
             while (rs.next()) {
                 String username = rs.getString("username");
                 boolean admin = rs.getBoolean("admin");
-                users.add(new User(username, admin));
+                String role = rs.getString("role");
+                users.add(createUserFromDb(username, admin, role));
             }
         } catch (SQLException e) {
             System.err.println("Error obteniendo usuarios: " + e.getMessage());
@@ -198,15 +231,16 @@ public class DatabaseHelper {
     }
 
     public User getUserByUsername(String username) {
-        String sql = "SELECT username, admin FROM users WHERE username = ?";
-        
+        String sql = "SELECT username, admin, role FROM users WHERE username = ?";
+
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setString(1, username);
             
             try (ResultSet rs = pstmt.executeQuery()) {
                 if (rs.next()) {
                     boolean admin = rs.getBoolean("admin");
-                    return new User(username, admin);
+                    String role = rs.getString("role");
+                    return createUserFromDb(username, admin, role);
                 }
             }
         } catch (SQLException e) {
@@ -216,15 +250,32 @@ public class DatabaseHelper {
         return null;
     }
 
+    // Helper to map DB row to concrete User subclass. Uses explicit role if available, falls back to username heuristic.
+    private User createUserFromDb(String username, boolean admin, String role) {
+        String uname = username == null ? "" : username.toLowerCase();
+        if (role != null) {
+            String r = role.toUpperCase();
+            switch (r) {
+                case "ADMIN": return new org.models.Admin(username);
+                case "CHEF": return new org.models.Chef(username);
+                case "WAITER": return new org.models.Waiter(username);
+            }
+        }
+        // fallback: keep previous heuristic
+        if (admin) return new org.models.Admin(username);
+        if (uname.contains("chef")) return new org.models.Chef(username);
+        return new org.models.Waiter(username);
+    }
+
     // Mesa CRUD operations
     public boolean insertMesa(Mesa mesa) {
         String sql = "INSERT INTO mesas (id, capacidad, estado) VALUES (?, ?, ?)";
-        
+
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             pstmt.setInt(1, mesa.getId());
             pstmt.setInt(2, mesa.getCapacidad());
             pstmt.setString(3, mesa.getEstado().toString());
-            
+
             int rowsAffected = pstmt.executeUpdate();
             return rowsAffected > 0;
         } catch (SQLException e) {
@@ -236,15 +287,15 @@ public class DatabaseHelper {
     public List<Mesa> getAllMesas() {
         List<Mesa> mesas = new ArrayList<>();
         String sql = "SELECT id, capacidad, estado FROM mesas";
-        
+
         try (Statement stmt = connection.createStatement();
              ResultSet rs = stmt.executeQuery(sql)) {
-            
+
             while (rs.next()) {
                 int id = rs.getInt("id");
                 int capacidad = rs.getInt("capacidad");
                 String estadoStr = rs.getString("estado");
-                
+
                 Mesa mesa = new Mesa(id, capacidad);
                 mesa.setEstado(TableStatus.valueOf(estadoStr));
                 mesas.add(mesa);
@@ -252,7 +303,7 @@ public class DatabaseHelper {
         } catch (SQLException e) {
             System.err.println("Error obteniendo mesas: " + e.getMessage());
         }
-        
+
         return mesas;
     }
 

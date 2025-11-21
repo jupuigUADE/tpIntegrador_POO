@@ -1,15 +1,16 @@
 package org.models;
 
-public class User {
+public abstract class User {
     private final String username;
-    private final boolean admin;
 
-    public User(String username, boolean admin) {
+    protected User(String username) {
         this.username = username;
-        this.admin = admin;
     }
 
     public String getUsername() { return username; }
-    public boolean isAdmin() { return admin; }
-}
 
+    // Role helpers - override in subclasses as needed
+    public boolean isAdmin() { return false; }
+    public boolean isWaiter() { return false; }
+    public boolean isChef() { return false; }
+}
